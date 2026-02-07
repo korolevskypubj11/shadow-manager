@@ -899,6 +899,11 @@ def process_event(event):
         peer_id = event.obj.message['peer_id']
         
         # Создаем уникальный ключ для сообщения
+        # Используем несколько вариантов ключей для надежности
+        conversation_message_id = event.obj.message.get('conversation_message_id')
+        if conversation_message_id is None:
+            return
+
         message_key = f"{peer_id}_{conversation_message_id}"
         
         # Проверяем, не обрабатывали ли мы уже это сообщение
@@ -906,7 +911,9 @@ def process_event(event):
         if message_key in processed_messages:
             # Если сообщение было обработано менее 5 секунд назад, игнорируем
             if current_time - processed_messages[message_key] < 5:
-                return  # Убираем логирование дубликатов
+                if LOGGING_SETTINGS.get('log_duplicates', False):
+                    print(f"[DUPLICATE] Пропускаем дубликат сообщения: {message_key}")
+                return  # Игнорируем дубликат
         
         # Добавляем сообщение в кэш
         processed_messages[message_key] = current_time
@@ -924,6 +931,8 @@ def process_event(event):
             old_keys = [k for k, v in processed_messages.items() if current_time - v > cleanup_interval]
             for key in old_keys:
                 del processed_messages[key]
+            if old_keys:
+                print(f"[CACHE] Очищено {len(old_keys)} старых записей из кэша")
         
         # Проверяем действия в чате
         if 'action' in event.obj.message:
@@ -1093,10 +1102,13 @@ def process_event(event):
         
         if cmd:
             # Проверяем кулдаун команд
-            command_key = f"{from_id}_{cmd}"
+            command_key = f"{from_id}_{cmd}_{peer_id}"  # Добавляем peer_id для более уникального ключа
             current_time = int(time.time())
             if command_key in command_cooldown:
-                if current_time - command_cooldown[command_key] < COMMAND_COOLDOWN_TIME:
+                time_since_last = current_time - command_cooldown[command_key]
+                if time_since_last < COMMAND_COOLDOWN_TIME:
+                    if LOGGING_SETTINGS.get('log_duplicates', False):
+                        print(f"[COOLDOWN] Команда /{cmd} от {from_id} в кулдауне ({time_since_last}с < {COMMAND_COOLDOWN_TIME}с)")
                     return  # Игнорируем команду в кулдауне
             
             command_cooldown[command_key] = current_time
@@ -1107,6 +1119,8 @@ def process_event(event):
                 old_cooldowns = [k for k, v in command_cooldown.items() if current_time - v > cleanup_interval]
                 for key in old_cooldowns:
                     del command_cooldown[key]
+                if old_cooldowns and LOGGING_SETTINGS.get('log_cache_cleanup', False):
+                    print(f"[COOLDOWN CACHE] Очищено {len(old_cooldowns)} старых записей")
             
 
             
@@ -1286,8 +1300,6 @@ def process_event(event):
                         help_text += f"• /pull — Управление сеткой бесед\n"
                         help_text += f"• /resetrole <level> — Сбросить название роли\n"
                         help_text += f"• /delrole [lvl] — Сбросить/скрыть роль\n"
-                        help_text += f"• /gnewrole <level> <name> — Глобальное название роли\n"
-                        help_text += f"• /gdelrole <level> — Глобальный сброс роли\n"
                         help_text += f"• /ping — Статус бота и задержка\n"
                     help_text += f"\n"
 
@@ -1730,7 +1742,7 @@ def process_event(event):
                 # Определяем уровень роли
                 if 'reply_message' in event.obj.message:
                     if len(args) < 2:
-                        send_message(peer_id, "❌ Укажите уровень роли!\n\n🎭 Уровни ролей:\n0 - Хелпер/Лидер\n10 - Модератор\n20 - Старший модератор\n25 - Администратор\n30 - Старший Администратор\n40 - Заместитель Главного Следящего\n45 - Главный Следящий\n50 - Куратор Администрации\n60 - Заместитель Главного Администратора\n65 - Главный Администратор\n70 - Специальный Администратор\n75 - Заместитель Руководителя Проекта\n80 - Руководитель Проекта\n90 - Заместитель Основателя\n95 - Основатель Проекта\n99 - Владелец Проекта\n100 - Владелец Проекта", reply_to)
+                        send_message(peer_id, "❌ Укажите уровень роли!\n\", reply_to)
                         return
                     try:
                         role_level = int(args[1])
@@ -1739,7 +1751,7 @@ def process_event(event):
                         return
                 else:
                     if len(args) < 3:
-                        send_message(peer_id, "❌ Укажите уровень роли!\n\n🎭 Уровни ролей:\n0 - Хелпер/Лидер\n10 - Модератор\n20 - Старший модератор\n25 - Администратор\n30 - Старший Администратор\n40 - Заместитель Главного Следящего\n45 - Главный Следящий\n50 - Куратор Администрации\n60 - Заместитель Главного Администратора\n65 - Главный Администратор\n70 - Специальный Администратор\n75 - Заместитель Руководителя Проекта\n80 - Руководитель Проекта\n90 - Заместитель Основателя\n95 - Основатель Проекта\n99 - Владелец Проекта\n100 - Владелец Проекта", reply_to)
+                        send_message(peer_id, "❌ Укажите уровень роли!", reply_to)
                         return
                     try:
                         role_level = int(args[2])
@@ -1749,7 +1761,7 @@ def process_event(event):
 
                 valid_roles = [0, 10, 20, 25, 30, 40, 45, 50, 60, 65, 70, 75, 80, 90, 95, 100]
                 if role_level not in valid_roles:
-                    send_message(peer_id, "❌ Уровень роли должен быть одним из допустимых!\n\n🎭 Уровни ролей:\n0 - Хелпер/Лидер\n10 - Модератор\n20 - Старший модератор\n25 - Администратор\n30 - Старший Администратор\n40 - Заместитель Главного Следящего\n45 - Главный Следящий\n50 - Куратор Администрации\n60 - Заместитель Главного Администратора\n65 - Главный Администратор\n70 - Специальный Администратор\n75 - Заместитель Руководителя Проекта\n80 - Руководитель Проекта\n90 - Заместитель Основателя\n95 - Основатель Проекта\n99 - Владелец Проекта\n100 - Владелец Проекта", reply_to)
+                    send_message(peer_id, "❌ Уровень роли должен быть одним из допустимых!", reply_to)
                     return
 
                 # Конвертируем уровни в новые значения
@@ -1993,6 +2005,104 @@ def process_event(event):
                 message += f"👤 Пользователь: {get_mention(target_id, chat_id)}"
 # Здесь нужно было бы получить текущую роль перед снятием
                 send_to_all_pull_chats(chat_id, message)
+            
+            elif cmd in ['gdelrole', 'гделроль']:
+                if chat_id == 0 or not check_chat(chat_id):
+                    return
+                    
+                if get_role(from_id, chat_id) < 99:  # Только владелец проекта
+                    send_message(peer_id, "❌ Недостаточно прав! Команда доступна только владельцу проекта! 👑", reply_to)
+                    return
+
+                pull_chats = get_pull_chats(chat_id)
+                if not pull_chats:
+                    send_message(peer_id, "❌ Чат не находится в объединении!", reply_to)
+                    return
+
+                if len(args) < 2:
+                    message = "❌ Укажите уровень роли для удаления!\n"
+                    message += "📝 Использование: /gdelrole [уровень]\n\n"
+                    message += "📝 Пример: /gdelrole 10"
+                    send_message(peer_id, message, reply_to)
+                    return
+                
+                try:
+                    role_level = int(args[1])
+                    
+                    # Проверяем допустимые уровни ролей
+                    valid_roles = [0, 10, 20, 25, 30, 40, 45, 50, 60, 65, 70, 75, 80, 90, 95, 99, 100]
+                    if role_level not in valid_roles:
+                        send_message(peer_id, "❌ Неверный уровень роли! Используйте допустимые уровни из списка выше.", reply_to)
+                        return
+                    
+                    # Проверяем, не пытается ли изменить роль выше своей
+                    if role_level >= get_role(from_id, chat_id) and from_id != BOT_OWNER_ID:
+                        send_message(peer_id, "❌ Вы не можете удалить роль такого же или выше уровня!", reply_to)
+                        return
+                    
+                    # Получаем название роли перед удалением
+                    role_name = get_role_name(role_level, chat_id)
+                    
+                    print(f"[GDELROLE] Начинаем удаление роли {role_level} ({role_name}) в {len(pull_chats)} чатах")
+                    
+                    # Применяем изменения ко всем чатам в пулле
+                    success_count = 0
+                    total_users_affected = 0
+                    errors = []
+                    
+                    for target_chat in pull_chats:
+                        try:
+                            print(f"[GDELROLE] Обработка чата {target_chat}")
+                            
+                            # 1. Снимаем роль у всех пользователей, у кого она есть
+                            try:
+                                sql.execute(f"SELECT user_id, level FROM permissions_{target_chat} WHERE level = ?", (role_level,))
+                                users_with_role = sql.fetchall()
+                                
+                                if users_with_role:
+                                    print(f"[GDELROLE] Найдено {len(users_with_role)} пользователей с ролью {role_level} в чате {target_chat}")
+                                    for user_id, _ in users_with_role:
+                                        sql.execute(f"UPDATE permissions_{target_chat} SET level = 0 WHERE user_id = ?", (user_id,))
+                                        total_users_affected += 1
+                                    print(f"[GDELROLE] Роль снята у {len(users_with_role)} пользователей")
+                            except Exception as e:
+                                print(f"[GDELROLE] Ошибка при снятии ролей в чате {target_chat}: {e}")
+                            
+                            # 2. Удаляем кастомное название
+                            sql.execute("DELETE FROM custom_role_names WHERE chat_id = ? AND role_level = ?", 
+                                       (target_chat, role_level))
+                            deleted_custom = sql.rowcount
+                            
+                            # 3. Добавляем в список отключенных ролей
+                            sql.execute("INSERT OR IGNORE INTO disabled_roles VALUES (?, ?)", (target_chat, role_level))
+                            
+                            database.commit()
+                            success_count += 1
+                            print(f"[GDELROLE] ✅ Чат {target_chat}: успех (удалено кастомных имен: {deleted_custom})")
+                        except Exception as e:
+                            error_msg = f"Чат {target_chat}: {str(e)}"
+                            errors.append(error_msg)
+                            print(f"[GDELROLE] ❌ Ошибка в чате {target_chat}: {e}")
+                    
+                    print(f"[GDELROLE] Завершено. Успешно: {success_count}/{len(pull_chats)}, пользователей затронуто: {total_users_affected}")
+                    
+                    message = f"✅ Роль «{role_name}» (уровень {role_level}) глобально удалена! 🗑️\n"
+                    message += f"📊 Обработано чатов: {success_count}/{len(pull_chats)}\n"
+                    message += f"👥 Пользователей затронуто: {total_users_affected}\n"
+                    message += f"👮 Администратор: {get_mention(from_id, chat_id)}\n\n"
+                    
+                    if errors:
+                        message += f"\n\n⚠️ Ошибки в {len(errors)} чатах"
+                    
+                    send_to_all_pull_chats(chat_id, message)
+                    
+                except ValueError:
+                    send_message(peer_id, "❌ Уровень роли должен быть числом!", reply_to)
+                except Exception as e:
+                    print(f"[GDELROLE] Критическая ошибка: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    send_message(peer_id, f"❌ Ошибка: {str(e)}", reply_to)
             
             # Команда ID
             elif cmd in ['id', 'ид']:
@@ -2879,7 +2989,7 @@ def process_event(event):
 
                 if role_level not in valid_roles_list or role_level in disabled_levels:
                     # Формируем список доступных ролей
-                    message = "❌ Уровень роли должен быть одним из допустимых!\n\n🎭 Уровни ролей:\n"
+                    message = "❌ Уровень роли должен быть одним из допустимых!\n"
                     
                     displayed_roles = [r for r in valid_roles_list if r not in disabled_levels]
                     for r in sorted(displayed_roles, reverse=True):
@@ -3154,8 +3264,6 @@ def process_event(event):
                 if len(args) < 3:
                     message = "❌ Неверный формат команды!\n"
                     message += "📝 Использование: /newrole [уровень] [новое название]\n\n"
-                    message += "🎭 Уровни ролей:\n"
-                    message += "0 - Хелпер/Лидер\n10 - Модератор\n20 - Старший модератор\n25 - Администратор\n30 - Старший Администратор\n40 - Заместитель Главного Следящего\n45 - Главный Следящий\n50 - Куратор Администрации\n60 - Заместитель Главного Администратора\n65 - Главный Администратор\n70 - Специальный Администратор\n75 - Заместитель Руководителя Проекта\n80 - Руководитель Проекта\n90 - Заместитель Основателя\n95 - Основатель Проекта\n99 - Владелец Проекта\n100 - Владелец Проекта\n\n"
                     message += "📝 Пример: /newrole 10 \"Модератор\""
                     send_message(peer_id, message, reply_to)
                     return
@@ -3255,109 +3363,6 @@ def process_event(event):
                     
                 except ValueError:
                     send_message(peer_id, "❌ Укажите числовой уровень роли или пользователя!", reply_to)
-                except Exception as e:
-                    send_message(peer_id, f"❌ Ошибка: {str(e)}", reply_to)
-
-            # Команда gnewrole - глобальное изменение названия роли
-            elif cmd in ['gnewrole', 'гноваяроль']:
-                if chat_id == 0 or not check_chat(chat_id):
-                    return
-                
-                if get_role(from_id, chat_id) < 99:
-                    send_message(peer_id, "❌ Недостаточно прав! Команда доступна только владельцу проекта! 👑", reply_to)
-                    return
-                
-                if len(args) < 3:
-                    message = "❌ Неверный формат команды!\n"
-                    message += "📝 Использование: /gnewrole [уровень] [новое название]\n\n"
-                    send_message(peer_id, message, reply_to)
-                    return
-                
-                try:
-                    role_level = int(args[1])
-                    new_name = ' '.join(args[2:])
-                    
-                    # Проверяем допустимые уровни ролей
-                    valid_roles = [0, 10, 20, 25, 30, 40, 45, 50, 60, 65, 70, 75, 80, 90, 95, 99, 100]
-                    if role_level not in valid_roles:
-                        send_message(peer_id, "❌ Неверный уровень роли!", reply_to)
-                        return
-                    
-                    pull_chats = get_pull_chats(chat_id)
-                    if not pull_chats:
-                        send_message(peer_id, "❌ Чат не находится в объединении!", reply_to)
-                        return
-                    
-                    success_count = 0
-                    for target_chat in pull_chats:
-                        try:
-                            # Сохраняем кастомное название
-                            sql.execute("INSERT OR REPLACE INTO custom_role_names VALUES (?, ?, ?)", 
-                                       (target_chat, role_level, new_name))
-                            # Если роль была отключена - включаем её обратно
-                            sql.execute("DELETE FROM disabled_roles WHERE chat_id = ? AND role_level = ?", (target_chat, role_level))
-                            success_count += 1
-                        except:
-                            pass
-                    
-                    database.commit()
-                    
-                    message = f"✅ Глобальное изменение названия роли завершено! 🎉\n"
-                    message += f"📊 Уровень роли: {role_level}\n"
-                    message += f"✅ Новое название: {new_name}\n"
-                    message += f"🏠 Обновлено чатов: {success_count}"
-                    send_message(peer_id, message, reply_to)
-                    
-                except ValueError:
-                    send_message(peer_id, "❌ Уровень роли должен быть числом!", reply_to)
-                except Exception as e:
-                    send_message(peer_id, f"❌ Ошибка: {str(e)}", reply_to)
-
-            # Команда gdelrole - глобальное отключение/сброс роли
-            elif cmd in ['gdelrole', 'гсбросроли', 'гсбросроли']:
-                if chat_id == 0 or not check_chat(chat_id):
-                    return
-                    
-                if get_role(from_id, chat_id) < 99:
-                    send_message(peer_id, "❌ Недостаточно прав! Команда доступна только владельцу проекта! 👑", reply_to)
-                    return
-                
-                if len(args) < 2:
-                    send_message(peer_id, "❌ Укажите уровень роли!\n📝 Использование: /gdelrole [уровень]", reply_to)
-                    return
-                
-                try:
-                    role_level = int(args[1])
-                    valid_roles = [0, 10, 20, 25, 30, 40, 45, 50, 60, 65, 70, 75, 80, 90, 95, 99, 100]
-                    if role_level not in valid_roles:
-                        send_message(peer_id, "❌ Некорректный уровень роли!", reply_to)
-                        return
-
-                    pull_chats = get_pull_chats(chat_id)
-                    if not pull_chats:
-                        send_message(peer_id, "❌ Чат не находится в объединении!", reply_to)
-                        return
-
-                    success_count = 0
-                    for target_chat in pull_chats:
-                        try:
-                            # 1. Удаляем кастомное название
-                            sql.execute("DELETE FROM custom_role_names WHERE chat_id = ? AND role_level = ?", 
-                                       (target_chat, role_level))
-                            # 2. Добавляем в список отключенных ролей
-                            sql.execute("INSERT OR IGNORE INTO disabled_roles VALUES (?, ?)", (target_chat, role_level))
-                            success_count += 1
-                        except:
-                            pass
-                    
-                    database.commit()
-                    
-                    message = f"✅ Глобальный сброс роли уровня {role_level} завершен! 🗑️\n"
-                    message += f"🏠 Обновлено чатов: {success_count}"
-                    send_message(peer_id, message, reply_to)
-                    
-                except ValueError:
-                    send_message(peer_id, "❌ Укажите числовой уровень роли!", reply_to)
                 except Exception as e:
                     send_message(peer_id, f"❌ Ошибка: {str(e)}", reply_to)
             
