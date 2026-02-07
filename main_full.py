@@ -1742,7 +1742,7 @@ def process_event(event):
                 # Определяем уровень роли
                 if 'reply_message' in event.obj.message:
                     if len(args) < 2:
-                        send_message(peer_id, "❌ Укажите уровень роли!\n\", reply_to)
+                        send_message(peer_id, "❌ Укажите уровень роли!\n", reply_to)
                         return
                     try:
                         role_level = int(args[1])
