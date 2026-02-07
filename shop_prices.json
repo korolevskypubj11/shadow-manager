@@ -1,0 +1,16 @@
+{
+    "vip_statuses": {
+        "gold": {
+            "name": "🥇 GOLD VIP статус",
+            "price": 15000
+        },
+        "elite": {
+            "name": "💎 ELITE VIP статус",
+            "price": 25000
+        },
+        "diamond": {
+            "name": "💠 DIAMOND VIP статус",
+            "price": 50000
+        }
+    }
+}
